@@ -64,7 +64,7 @@
                            Margin="0,0,0,20"/>
                 
                 <ScrollViewer Grid.Row="1" 
-                              VerticalScrollBarVisibility="Auto">
+                            VerticalScrollBarVisibility="Auto">
                     <ItemsControl x:Name="CursorsList">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -106,14 +106,30 @@
             <Grid x:Name="PageList" Visibility="Collapsed">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
                 <TextBlock Text="主题列表" 
                         Foreground="White" 
                         FontSize="20" 
                         FontWeight="Bold"
-                        Margin="0,0,0,20"/>
-                <ScrollViewer Grid.Row="1" 
+                        Margin="0,0,0,12"/>
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
+                    <Button Content="🔄 刷新远程列表" 
+                            Click="BtnRefreshRemote_Click"
+                            Background="#3c3c3c" 
+                            Foreground="White" 
+                            BorderThickness="0"
+                            Padding="12,6"
+                            Margin="0,0,10,0"/>
+                    <Button Content="↩️ 恢复默认光标" 
+                            Click="BtnRestoreDefault_Click"
+                            Background="#3c3c3c" 
+                            Foreground="White" 
+                            BorderThickness="0"
+                            Padding="12,6"/>
+                </StackPanel>
+                <ScrollViewer Grid.Row="2" 
                             VerticalScrollBarVisibility="Auto">
                     <ItemsControl x:Name="ThemesList">
                         <ItemsControl.ItemsPanel>

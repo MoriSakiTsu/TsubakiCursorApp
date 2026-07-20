@@ -2,8 +2,11 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
@@ -38,6 +41,18 @@ namespace TsubakiCursorApp
         private const uint LR_DEFAULTSIZE = 0x00000040;
         private const uint SPI_SETCURSORS = 0x0057;
         private const uint SPIF_SENDCHANGE = 0x0002;
+
+        // ========== 多源 Manifest URL（Gitee 优先，GitHub 回退） ==========
+        private static readonly string[] DEFAULT_MANIFEST_URLS = new[]
+        {
+            "https://gitee.com/MoriSakiTsu/Tsubaki-Cursor-Themes/raw/main/manifest.json",
+            "https://raw.githubusercontent.com/MoriSakiTsu/Tsubaki-Cursor-Themes/main/manifest.json"
+        };
+
+        private static readonly HttpClient _httpClient = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(10)
+        };
 
         // ========== 别名映射 ==========
         private static readonly Dictionary<string, string> CursorAliases =
@@ -86,6 +101,7 @@ namespace TsubakiCursorApp
             "Hand", "Pin", "Person"
         };
 
+        private List<ThemeInfo> _allThemes = new List<ThemeInfo>();
         private Border _activeNav;
         private string _currentAppliedThemeId = null;
 
@@ -95,6 +111,7 @@ namespace TsubakiCursorApp
             LoadCurrentCursors();
             _activeNav = NavUsing;
             ScanLocalThemes();
+            _ = LoadRemoteThemesAsync();
         }
 
         // ========== 检测是否使用某个本地主题 ==========
@@ -224,7 +241,7 @@ namespace TsubakiCursorApp
             if (themesDir == null)
                 return;
 
-            var themes = new List<ThemeInfo>();
+            _allThemes.Clear();
 
             foreach (string dir in Directory.GetDirectories(themesDir))
             {
@@ -232,11 +249,12 @@ namespace TsubakiCursorApp
                 if (theme != null)
                 {
                     theme.IsApplied = (theme.Id == _currentAppliedThemeId);
-                    themes.Add(theme);
+                    _allThemes.Add(theme);
                 }
             }
 
-            ThemesList.ItemsSource = themes;
+            ThemesList.ItemsSource = null;
+            ThemesList.ItemsSource = _allThemes;
         }
 
         private ThemeInfo LoadThemeFromFolder(string folderPath)
@@ -261,6 +279,7 @@ namespace TsubakiCursorApp
             string jsonPath = Path.Combine(folderPath, "theme.json");
             string themeName = Path.GetFileName(folderPath);
             string themeAuthor = "未知作者";
+            string themeVersion = "1.0";
 
             if (File.Exists(jsonPath))
             {
@@ -272,6 +291,8 @@ namespace TsubakiCursorApp
                         themeName = nameProp.GetString() ?? themeName;
                     if (doc.RootElement.TryGetProperty("author", out var authorProp))
                         themeAuthor = authorProp.GetString() ?? themeAuthor;
+                    if (doc.RootElement.TryGetProperty("version", out var verProp))
+                        themeVersion = verProp.GetString() ?? themeVersion;
                 }
                 catch { }
             }
@@ -300,6 +321,7 @@ namespace TsubakiCursorApp
                 Id = Path.GetFileName(folderPath),
                 Name = themeName,
                 Author = themeAuthor,
+                Version = themeVersion,
                 FolderPath = folderPath,
                 CursorFiles = cursorFiles,
                 PreviewImage = preview
@@ -433,6 +455,170 @@ namespace TsubakiCursorApp
             return string.Join(",", parts);
         }
 
+        // ========== 网络：加载远程主题清单（多源回退） ==========
+        private async System.Threading.Tasks.Task LoadRemoteThemesAsync()
+        {
+            string manifestJson = null;
+
+            foreach (string url in DEFAULT_MANIFEST_URLS)
+            {
+                try
+                {
+                    manifestJson = await _httpClient.GetStringAsync(url);
+                    break;
+                }
+                catch { }
+            }
+
+            if (string.IsNullOrEmpty(manifestJson))
+                return;
+
+            try
+            {
+                using JsonDocument doc = JsonDocument.Parse(manifestJson);
+                if (!doc.RootElement.TryGetProperty("themes", out var themesArray))
+                    return;
+
+                foreach (JsonElement themeElem in themesArray.EnumerateArray())
+                {
+                    string id = themeElem.TryGetProperty("id", out var idProp) ? idProp.GetString() : null;
+                    string name = themeElem.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : null;
+                    string author = themeElem.TryGetProperty("author", out var authorProp) ? authorProp.GetString() : null;
+                    string downloadUrl = themeElem.TryGetProperty("downloadUrl", out var urlProp) ? urlProp.GetString() : null;
+                    string sha256 = themeElem.TryGetProperty("sha256", out var shaProp) ? shaProp.GetString() : "";
+                    string version = themeElem.TryGetProperty("version", out var verProp) ? verProp.GetString() : "";
+
+                    if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(downloadUrl))
+                        continue;
+
+                    var existing = _allThemes.FirstOrDefault(t => t.Id == id);
+                    if (existing != null)
+                    {
+                        // 本地已有，更新远程信息并检测更新
+                        existing.IsRemote = true;
+                        existing.DownloadUrl = downloadUrl;
+                        existing.Sha256 = sha256;
+                        existing.RemoteVersion = version;
+                        existing.HasUpdate = !string.IsNullOrEmpty(version) && version != existing.Version;
+                    }
+                    else
+                    {
+                        // 纯远程主题（未下载）
+                        _allThemes.Add(new ThemeInfo
+                        {
+                            Id = id,
+                            Name = name ?? id,
+                            Author = author ?? "未知作者",
+                            Version = "",
+                            RemoteVersion = version,
+                            IsRemote = true,
+                            IsDownloaded = false,
+                            DownloadUrl = downloadUrl,
+                            Sha256 = sha256,
+                            FolderPath = null,
+                            CursorFiles = new Dictionary<string, string>(),
+                            PreviewImage = null
+                        });
+                    }
+                }
+
+                ThemesList.ItemsSource = null;
+                ThemesList.ItemsSource = _allThemes;
+            }
+            catch { }
+        }
+
+        // ========== 网络：下载主题 ==========
+        private async System.Threading.Tasks.Task DownloadThemeAsync(ThemeInfo theme)
+        {
+            try
+            {
+                theme.IsDownloading = true;
+
+                string tempZip = Path.Combine(Path.GetTempPath(), $"{theme.Id}_{Guid.NewGuid():N}.zip");
+                byte[] data = await _httpClient.GetByteArrayAsync(theme.DownloadUrl);
+                await File.WriteAllBytesAsync(tempZip, data);
+
+                // SHA256 校验
+                if (!string.IsNullOrEmpty(theme.Sha256))
+                {
+                    using var sha = SHA256.Create();
+                    byte[] hash = sha.ComputeHash(data);
+                    string hashStr = BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+                    if (hashStr != theme.Sha256.ToLowerInvariant())
+                    {
+                        File.Delete(tempZip);
+                        throw new Exception("SHA256 校验失败，文件可能已被篡改");
+                    }
+                }
+
+                // 解压
+                string themesDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Themes");
+                string extractDir = Path.Combine(themesDir, theme.Id);
+
+                string tempExtractDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+                Directory.CreateDirectory(tempExtractDir);
+
+                ZipFile.ExtractToDirectory(tempZip, tempExtractDir);
+
+                // 处理 zip 内部结构（兼容 zip 内包含单层子文件夹或直接是文件的情况）
+                var extractedItems = Directory.GetFileSystemEntries(tempExtractDir);
+                if (extractedItems.Length == 1 && Directory.Exists(extractedItems[0]))
+                {
+                    string innerFolder = extractedItems[0];
+                    if (Directory.Exists(extractDir))
+                        Directory.Delete(extractDir, true);
+                    Directory.Move(innerFolder, extractDir);
+                }
+                else
+                {
+                    if (Directory.Exists(extractDir))
+                        Directory.Delete(extractDir, true);
+                    Directory.Move(tempExtractDir, extractDir);
+                }
+
+                // 清理临时文件
+                if (File.Exists(tempZip))
+                    File.Delete(tempZip);
+                if (Directory.Exists(tempExtractDir))
+                    Directory.Delete(tempExtractDir, true);
+
+                // 加载新下载的主题信息到当前对象，使其立即可用
+                string downloadedFolder = Path.Combine(themesDir, theme.Id);
+                if (Directory.Exists(downloadedFolder))
+                {
+                    var loaded = LoadThemeFromFolder(downloadedFolder);
+                    if (loaded != null)
+                    {
+                        theme.FolderPath = loaded.FolderPath;
+                        theme.CursorFiles = loaded.CursorFiles;
+                        theme.PreviewImage = loaded.PreviewImage;
+                        theme.Version = loaded.Version;
+                        theme.IsDownloaded = true;
+                        theme.HasUpdate = false;
+                    }
+                }
+
+                MessageBox.Show(
+                    $"主题「{theme.Name}」下载成功！",
+                    "成功",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"下载失败：{ex.Message}",
+                    "错误",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+            finally
+            {
+                theme.IsDownloading = false;
+            }
+        }
+
         // ========== 导航切换 ==========
         private void SetActiveNav(Border nav)
         {
@@ -470,20 +656,141 @@ namespace TsubakiCursorApp
             SwitchPage(PageAbout);
         }
 
-        // ========== 点击"应用"按钮 ==========
-        private void BtnApplyTheme_Click(object sender, RoutedEventArgs e)
+        // ========== 刷新远程主题列表 ==========
+        private async void BtnRefreshRemote_Click(object sender, RoutedEventArgs e)
+        {
+            await LoadRemoteThemesAsync();
+        }
+
+        // ========== 恢复默认光标（卸载清理） ==========
+        private void BtnRestoreDefault_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show(
+                "确定要恢复系统默认鼠标指针吗？\n这将清除当前使用的 TsubakiCursor 主题设置，并删除 AppData 中的数据。",
+                "确认恢复默认",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes) return;
+
+            try
+            {
+                // 1. 备份当前注册表
+                var backup = new Dictionary<string, string>();
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Control Panel\Cursors"))
+                {
+                    if (key != null)
+                    {
+                        foreach (string name in CursorNames)
+                        {
+                            var val = key.GetValue(name) as string;
+                            backup[name] = val ?? "";
+                        }
+                    }
+                }
+
+                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+                string appDir = Path.Combine(appData, "TsubakiCursor");
+                string backupDir = Path.Combine(appDir, "Backup");
+                Directory.CreateDirectory(backupDir);
+                string backupFile = Path.Combine(backupDir, $"backup_{DateTime.Now:yyyyMMdd_HHmmss}.json");
+                File.WriteAllText(backupFile, JsonSerializer.Serialize(backup));
+
+                // 2. 清空注册表值（Windows 会回退到默认光标）
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Control Panel\Cursors", true))
+                {
+                    if (key != null)
+                    {
+                        foreach (string name in CursorNames)
+                        {
+                            key.SetValue(name, "");
+                        }
+                    }
+                }
+
+                // 3. 清理 Schemes 中 TsubakiCursor 相关的方案
+                using (RegistryKey schemesKey = Registry.CurrentUser.OpenSubKey(@"Control Panel\Cursors\Schemes", true))
+                {
+                    if (schemesKey != null)
+                    {
+                        var schemeNames = schemesKey.GetValueNames();
+                        foreach (string schemeName in schemeNames)
+                        {
+                            string schemeValue = schemesKey.GetValue(schemeName) as string;
+                            if (!string.IsNullOrEmpty(schemeValue) &&
+                                schemeValue.IndexOf(@"\TsubakiCursor\", StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                schemesKey.DeleteValue(schemeName, false);
+                            }
+                        }
+                    }
+                }
+
+                // 4. 广播生效
+                SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, SPIF_SENDCHANGE);
+
+                // 5. 删除 AppData 目录
+                if (Directory.Exists(appDir))
+                {
+                    try { Directory.Delete(appDir, true); } catch { }
+                }
+
+                // 6. 刷新界面
+                _currentAppliedThemeId = null;
+                ScanLocalThemes();
+                LoadCurrentCursors();
+                SetActiveNav(NavUsing);
+                SwitchPage(PageUsing);
+
+                MessageBox.Show(
+                    "已恢复系统默认鼠标指针。\n最后一次备份仍保留在：\n" + backupFile,
+                    "恢复成功",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"恢复失败：{ex.Message}",
+                    "错误",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+
+        // ========== 点击按钮（应用 / 下载 / 更新） ==========
+        private async void BtnApplyTheme_Click(object sender, RoutedEventArgs e)
         {
             Button button = sender as Button;
             ThemeInfo theme = button?.Tag as ThemeInfo;
             if (theme == null || theme.IsApplied) return;
 
-            var result = MessageBox.Show(
-                $"确定要应用主题「{theme.Name}」吗？\n作者：{theme.Author}\n包含 {theme.CursorFiles.Count} 个光标文件",
+            if (theme.IsRemote && !theme.IsDownloaded)
+            {
+                await DownloadThemeAsync(theme);
+                return;
+            }
+
+            if (theme.HasUpdate)
+            {
+                var result = MessageBox.Show(
+                    $"主题「{theme.Name}」有新版本（当前：{theme.Version}，最新：{theme.RemoteVersion}），是否更新？",
+                    "发现更新",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+                if (result == MessageBoxResult.Yes)
+                {
+                    await DownloadThemeAsync(theme);
+                }
+                return;
+            }
+
+            var applyResult = MessageBox.Show(
+                $"确定要应用主题「{theme.Name}」吗？\n作者：{theme.Author}\n包含 {theme.CursorFiles?.Count ?? 0} 个光标文件",
                 "确认应用",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
 
-            if (result == MessageBoxResult.Yes)
+            if (applyResult == MessageBoxResult.Yes)
             {
                 ApplyTheme(theme);
             }
@@ -499,16 +806,72 @@ namespace TsubakiCursorApp
         public BitmapSource Image { get; set; }
     }
 
-    public class ThemeInfo
+    public class ThemeInfo : System.ComponentModel.INotifyPropertyChanged
     {
+        private bool _isApplied;
+        private bool _isRemote;
+        private bool _isDownloaded;
+        private bool _isDownloading;
+        private bool _hasUpdate;
+
         public string Id { get; set; }
         public string Name { get; set; }
         public string Author { get; set; }
         public string FolderPath { get; set; }
         public Dictionary<string, string> CursorFiles { get; set; }
         public BitmapSource PreviewImage { get; set; }
-        public bool IsApplied { get; set; }
-        public string ButtonText => IsApplied ? "使用中" : "应用";
-        public bool IsButtonEnabled => !IsApplied;
+
+        public string Version { get; set; }
+        public string RemoteVersion { get; set; }
+        public string DownloadUrl { get; set; }
+        public string Sha256 { get; set; }
+
+        public bool IsApplied
+        {
+            get => _isApplied;
+            set { _isApplied = value; OnPropertyChanged(nameof(ButtonText)); OnPropertyChanged(nameof(IsButtonEnabled)); }
+        }
+
+        public bool IsRemote
+        {
+            get => _isRemote;
+            set { _isRemote = value; OnPropertyChanged(nameof(ButtonText)); OnPropertyChanged(nameof(IsButtonEnabled)); }
+        }
+
+        public bool IsDownloaded
+        {
+            get => _isDownloaded;
+            set { _isDownloaded = value; OnPropertyChanged(nameof(ButtonText)); OnPropertyChanged(nameof(IsButtonEnabled)); }
+        }
+
+        public bool IsDownloading
+        {
+            get => _isDownloading;
+            set { _isDownloading = value; OnPropertyChanged(nameof(ButtonText)); OnPropertyChanged(nameof(IsButtonEnabled)); }
+        }
+
+        public bool HasUpdate
+        {
+            get => _hasUpdate;
+            set { _hasUpdate = value; OnPropertyChanged(nameof(ButtonText)); OnPropertyChanged(nameof(IsButtonEnabled)); }
+        }
+
+        public string ButtonText
+        {
+            get
+            {
+                if (IsApplied) return "使用中";
+                if (IsDownloading) return "下载中";
+                if (IsRemote && !IsDownloaded) return "下载";
+                if (HasUpdate) return "更新";
+                return "应用";
+            }
+        }
+
+        public bool IsButtonEnabled => !IsApplied && !IsDownloading;
+
+        public event System.ComponentModel.PropertyChangedEventHandler PropertyChanged;
+        protected void OnPropertyChanged(string name) =>
+            PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
     }
 }
