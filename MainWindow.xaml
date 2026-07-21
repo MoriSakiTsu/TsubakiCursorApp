@@ -22,7 +22,7 @@
                         Background="#3c3c3c" 
                         Cursor="Hand"
                         MouseLeftButtonDown="NavUsing_Click">
-                    <TextBlock Text="🖱️ 使用中" 
+                    <TextBlock Text="|使用中" 
                                Foreground="White"
                                FontSize="13"
                                Margin="16,14"/>
@@ -32,7 +32,7 @@
                         Background="Transparent" 
                         Cursor="Hand"
                         MouseLeftButtonDown="NavList_Click">
-                    <TextBlock Text="📋 列表" 
+                    <TextBlock Text="|列表" 
                                Foreground="#cccccc"
                                FontSize="13"
                                Margin="16,14"/>
@@ -42,7 +42,7 @@
                         Background="Transparent" 
                         Cursor="Hand"
                         MouseLeftButtonDown="NavAbout_Click">
-                    <TextBlock Text="ℹ️ 关于" 
+                    <TextBlock Text="|关于" 
                                Foreground="#cccccc"
                                FontSize="13"
                                Margin="16,14"/>
@@ -115,14 +115,14 @@
                         FontWeight="Bold"
                         Margin="0,0,0,12"/>
                 <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
-                    <Button Content="🔄 刷新远程列表" 
+                    <Button Content="|刷新远程列表" 
                             Click="BtnRefreshRemote_Click"
                             Background="#3c3c3c" 
                             Foreground="White" 
                             BorderThickness="0"
                             Padding="12,6"
                             Margin="0,0,10,0"/>
-                    <Button Content="↩️ 恢复默认光标" 
+                    <Button Content="|恢复默认光标" 
                             Click="BtnRestoreDefault_Click"
                             Background="#3c3c3c" 
                             Foreground="White" 
