@@ -41,6 +41,8 @@ namespace TsubakiCursorApp
         private const uint LR_DEFAULTSIZE = 0x00000040;
         private const uint SPI_SETCURSORS = 0x0057;
         private const uint SPIF_SENDCHANGE = 0x0002;
+
+        // ========== 多源 Manifest URL（Gitee 优先，GitHub 回退） ==========
         private static readonly string[] DEFAULT_MANIFEST_URLS = new[]
         {
             "https://gitee.com/MoriSakiTsu/Tsubaki-Cursor-Themes/raw/main/manifest.json",
@@ -52,6 +54,7 @@ namespace TsubakiCursorApp
             Timeout = TimeSpan.FromSeconds(10)
         };
 
+        // ========== 别名映射 ==========
         private static readonly Dictionary<string, string> CursorAliases =
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -89,6 +92,7 @@ namespace TsubakiCursorApp
             {"Loc", "Pin"},            // 定位/图钉 (Location)
         };
 
+        // ========== 标准光标角色顺序（用于注册表和 Schemes） ==========
         private static readonly string[] CursorNames = new string[]
         {
             "Arrow", "Help", "AppStarting", "Wait", "Crosshair",
@@ -110,6 +114,7 @@ namespace TsubakiCursorApp
             _ = LoadRemoteThemesAsync();
         }
 
+        // ========== 检测是否使用某个本地主题 ==========
         private string DetectCurrentAppliedTheme()
         {
             try
@@ -133,6 +138,7 @@ namespace TsubakiCursorApp
             catch { return null; }
         }
 
+        // ========== 读取当前系统指针（使用中页面） ==========
         private void LoadCurrentCursors()
         {
             var cursors = new List<CursorInfo>();
@@ -162,6 +168,7 @@ namespace TsubakiCursorApp
             CursorsList.ItemsSource = cursors;
         }
 
+        // ========== 加载 .cur / .ani 为图片 ==========
         private BitmapSource LoadCursorImage(string path)
         {
             if (string.IsNullOrEmpty(path) || !File.Exists(path))
@@ -190,6 +197,7 @@ namespace TsubakiCursorApp
                 catch { }
             }
 
+            // .ani：LoadCursorFromFile + CopyIcon 提取第一帧
             if (ext == ".ani")
             {
                 try
@@ -216,6 +224,7 @@ namespace TsubakiCursorApp
             return null;
         }
 
+        // ========== 扫描本地主题 ==========
         private void ScanLocalThemes()
         {
             _currentAppliedThemeId = DetectCurrentAppliedTheme();
@@ -287,6 +296,7 @@ namespace TsubakiCursorApp
                 catch { }
             }
 
+            // 取预览图（循环回退直到成功）
             BitmapSource preview = null;
             string[] previewPriority = new[]
             {
@@ -324,6 +334,7 @@ namespace TsubakiCursorApp
             return null;
         }
 
+        // ========== 应用主题（核心逻辑） ==========
         private void ApplyTheme(ThemeInfo theme)
         {
             try
@@ -432,6 +443,7 @@ namespace TsubakiCursorApp
             return string.Join(",", parts);
         }
 
+        // ========== 网络：加载远程主题清单（多源回退） ==========
         private async System.Threading.Tasks.Task LoadRemoteThemesAsync()
         {
             string manifestJson = null;
@@ -502,6 +514,23 @@ namespace TsubakiCursorApp
             catch { }
         }
 
+        // ========== 辅助：递归复制目录（跨卷兼容，替代 Directory.Move） ==========
+        private static void CopyDirectoryRecursive(string sourceDir, string destDir)
+        {
+            Directory.CreateDirectory(destDir);
+            foreach (string file in Directory.GetFiles(sourceDir))
+            {
+                string destFile = Path.Combine(destDir, Path.GetFileName(file));
+                File.Copy(file, destFile, true);
+            }
+            foreach (string subDir in Directory.GetDirectories(sourceDir))
+            {
+                string destSubDir = Path.Combine(destDir, Path.GetFileName(subDir));
+                CopyDirectoryRecursive(subDir, destSubDir);
+            }
+        }
+
+        // ========== 网络：下载主题 ==========
         private async System.Threading.Tasks.Task DownloadThemeAsync(ThemeInfo theme)
         {
             try
@@ -538,13 +567,17 @@ namespace TsubakiCursorApp
                     string innerFolder = extractedItems[0];
                     if (Directory.Exists(extractDir))
                         Directory.Delete(extractDir, true);
-                    Directory.Move(innerFolder, extractDir);
+                    // 使用 Copy + Delete 替代 Move，跨卷兼容
+                    CopyDirectoryRecursive(innerFolder, extractDir);
+                    Directory.Delete(innerFolder, true);
                 }
                 else
                 {
                     if (Directory.Exists(extractDir))
                         Directory.Delete(extractDir, true);
-                    Directory.Move(tempExtractDir, extractDir);
+                    // 使用 Copy + Delete 替代 Move，跨卷兼容
+                    CopyDirectoryRecursive(tempExtractDir, extractDir);
+                    Directory.Delete(tempExtractDir, true);
                 }
 
                 if (File.Exists(tempZip))
@@ -587,6 +620,7 @@ namespace TsubakiCursorApp
             }
         }
 
+        // ========== 导航切换 ==========
         private void SetActiveNav(Border nav)
         {
             _activeNav.Background = Brushes.Transparent;
@@ -622,11 +656,14 @@ namespace TsubakiCursorApp
             SetActiveNav(NavAbout);
             SwitchPage(PageAbout);
         }
+
+        // ========== 刷新远程主题列表 ==========
         private async void BtnRefreshRemote_Click(object sender, RoutedEventArgs e)
         {
             await LoadRemoteThemesAsync();
         }
 
+        // ========== 恢复默认光标（卸载清理） ==========
         private void BtnRestoreDefault_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
@@ -715,6 +752,7 @@ namespace TsubakiCursorApp
             }
         }
 
+        // ========== 点击按钮（应用 / 下载 / 更新） ==========
         private async void BtnApplyTheme_Click(object sender, RoutedEventArgs e)
         {
             Button button = sender as Button;
@@ -754,6 +792,7 @@ namespace TsubakiCursorApp
         }
     }
 
+    // ========== 数据类 ==========
     public class CursorInfo
     {
         public string Name { get; set; }

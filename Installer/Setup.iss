@@ -1,10 +1,10 @@
 ; ============================================================
-; TsubakiCursorApp Installer
-; Version: 0.2.0
+; TsubakiCursorApp Installer v0.3.0
+; Self-contained - zero external dependencies
 ; ============================================================
 
 #define MyAppName "TsubakiCursorApp"
-#define MyAppVersion "0.2.0"
+#define MyAppVersion "0.3.0"
 #define MyAppPublisher "MoriSakiTsu"
 #define MyAppURL "https://github.com/MoriSakiTsu/TsubakiCursorApp"
 #define MyAppExeName "TsubakiCursorApp.exe"
@@ -19,6 +19,8 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
+DisableWelcomePage=no
+DisableDirPage=no
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 OutputDir=..\Output
@@ -27,11 +29,9 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
-ShowLanguageDialog=no
 
 [Languages]
 Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
-Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -47,95 +47,11 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Code]
-var
-  RuntimeMissing: Boolean;
-
-function IsRuntimeInstalled(): Boolean;
-var
-  VersionStr: String;
-  MajorVersion: Integer;
-begin
-  Result := False;
-  
-  if RegQueryStringValue(HKLM, 
-      'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App', 
-      'Version', VersionStr) then
-  begin
-    if Length(VersionStr) >= 2 then
-    begin
-      MajorVersion := StrToIntDef(Copy(VersionStr, 1, 2), 0);
-      if MajorVersion >= 10 then
-      begin
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
-  
-  if RegQueryStringValue(HKLM, 
-      'SOFTWARE\WOW6432Node\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App', 
-      'Version', VersionStr) then
-  begin
-    if Length(VersionStr) >= 2 then
-    begin
-      MajorVersion := StrToIntDef(Copy(VersionStr, 1, 2), 0);
-      if MajorVersion >= 10 then
-      begin
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
-  
-  if RegQueryStringValue(HKLM, 
-      'SOFTWARE\dotnet\Setup\InstalledVersions\x86\sharedfx\Microsoft.WindowsDesktop.App', 
-      'Version', VersionStr) then
-  begin
-    if Length(VersionStr) >= 2 then
-    begin
-      MajorVersion := StrToIntDef(Copy(VersionStr, 1, 2), 0);
-      if MajorVersion >= 10 then
-      begin
-        Result := True;
-        Exit;
-      end;
-    end;
-  end;
-end;
-
-function InitializeSetup(): Boolean;
-var
-  ErrCode: Integer;
-begin
-  Result := True;
-  RuntimeMissing := not IsRuntimeInstalled();
-  
-  if RuntimeMissing then
-  begin
-    if MsgBox(CustomMessage('MsgRuntimeMissing'), mbConfirmation, MB_YESNO) = IDYES then
-    begin
-      ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/10.0', '', '', SW_SHOW, ewNoWait, ErrCode);
-    end;
-  end;
-end;
-
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  ErrCode: Integer;
 begin
   if CurStep = ssPostInstall then
   begin
-    if RuntimeMissing then
-    begin
-      if MsgBox(CustomMessage('MsgInstallSuccessNoRuntime'), mbConfirmation, MB_YESNO) = IDYES then
-      begin
-        ShellExec('open', 'https://dotnet.microsoft.com/download/dotnet/10.0', '', '', SW_SHOW, ewNoWait, ErrCode);
-      end;
-    end
-    else
-    begin
-      MsgBox(CustomMessage('MsgInstallSuccess'), mbInformation, MB_OK);
-    end;
+    MsgBox(CustomMessage('MsgInstallSuccess'), mbInformation, MB_OK);
   end;
 end;
 
