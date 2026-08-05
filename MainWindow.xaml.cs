@@ -13,6 +13,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
 
 namespace TsubakiCursorApp
@@ -102,19 +103,68 @@ namespace TsubakiCursorApp
         };
 
         private List<ThemeInfo> _allThemes = new List<ThemeInfo>();
-        private Border _activeNav;
+        private string _activePage = "Using";
+        private int _currentNavIndex = 0;
         private string _currentAppliedThemeId = null;
 
         public MainWindow()
         {
             InitializeComponent();
             LoadCurrentCursors();
-            _activeNav = NavUsing;
+            Canvas.SetTop(NavHighlight, 0);
+            AnimateNavTo(0, instant: true);
             ScanLocalThemes();
             _ = LoadRemoteThemesAsync();
         }
 
-        // ========== 检测是否使用某个本地主题 ==========
+        // ========== 流体变形色块动画 ==========
+        private void AnimateNavTo(int newIndex, bool instant = false)
+        {
+            if (_currentNavIndex == newIndex)
+                return;
+
+            _currentNavIndex = newIndex;
+            double targetY = newIndex * 44;
+
+            var activeFg = new SolidColorBrush(Color.FromRgb(248, 244, 236));
+            var inactiveFg = new SolidColorBrush(Color.FromRgb(192, 180, 166));
+            NavUsingText.Foreground = (newIndex == 0) ? activeFg : inactiveFg;
+            NavListText.Foreground = (newIndex == 1) ? activeFg : inactiveFg;
+            NavAboutText.Foreground = (newIndex == 2) ? activeFg : inactiveFg;
+
+            if (instant)
+            {
+                Canvas.SetTop(NavHighlight, targetY);
+                NavHighlight.Height = 40;
+                NavHighlight.CornerRadius = new CornerRadius(8);
+                return;
+            }
+
+            var sb = new Storyboard();
+
+            // Canvas.Top：SineEase 平滑
+            var yAnim = new DoubleAnimation(targetY, TimeSpan.FromMilliseconds(450))
+            {
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+            };
+            Storyboard.SetTarget(yAnim, NavHighlight);
+            Storyboard.SetTargetProperty(yAnim, new PropertyPath("(Canvas.Top)"));
+            sb.Children.Add(yAnim);
+
+            // Height：拉伸 → 平滑恢复（无压扁）
+            var hAnim = new DoubleAnimationUsingKeyFrames();
+            hAnim.KeyFrames.Add(new SplineDoubleKeyFrame(40, TimeSpan.FromMilliseconds(0)));
+            hAnim.KeyFrames.Add(new SplineDoubleKeyFrame(56, TimeSpan.FromMilliseconds(200),
+                new KeySpline(0.3, 0.0, 1.0, 1.0)));
+            hAnim.KeyFrames.Add(new SplineDoubleKeyFrame(40, TimeSpan.FromMilliseconds(450),
+                new KeySpline(0.2, 0.0, 0.5, 1.0)));
+            Storyboard.SetTarget(hAnim, NavHighlight);
+            Storyboard.SetTargetProperty(hAnim, new PropertyPath("Height"));
+            sb.Children.Add(hAnim);
+
+            sb.Begin();
+        }
+
         private string DetectCurrentAppliedTheme()
         {
             try
@@ -138,7 +188,6 @@ namespace TsubakiCursorApp
             catch { return null; }
         }
 
-        // ========== 读取当前系统指针（使用中页面） ==========
         private void LoadCurrentCursors()
         {
             var cursors = new List<CursorInfo>();
@@ -168,7 +217,6 @@ namespace TsubakiCursorApp
             CursorsList.ItemsSource = cursors;
         }
 
-        // ========== 加载 .cur / .ani 为图片 ==========
         private BitmapSource LoadCursorImage(string path)
         {
             if (string.IsNullOrEmpty(path) || !File.Exists(path))
@@ -176,7 +224,6 @@ namespace TsubakiCursorApp
 
             string ext = Path.GetExtension(path).ToLower();
 
-            // .cur：Win32 LoadImage
             if (ext == ".cur")
             {
                 try
@@ -197,7 +244,6 @@ namespace TsubakiCursorApp
                 catch { }
             }
 
-            // .ani：LoadCursorFromFile + CopyIcon 提取第一帧
             if (ext == ".ani")
             {
                 try
@@ -224,7 +270,6 @@ namespace TsubakiCursorApp
             return null;
         }
 
-        // ========== 扫描本地主题 ==========
         private void ScanLocalThemes()
         {
             _currentAppliedThemeId = DetectCurrentAppliedTheme();
@@ -274,7 +319,6 @@ namespace TsubakiCursorApp
             if (cursorFiles.Count == 0)
                 return null;
 
-            // 读取 theme.json
             string jsonPath = Path.Combine(folderPath, "theme.json");
             string themeName = Path.GetFileName(folderPath);
             string themeAuthor = "未知作者";
@@ -296,7 +340,6 @@ namespace TsubakiCursorApp
                 catch { }
             }
 
-            // 取预览图（循环回退直到成功）
             BitmapSource preview = null;
             string[] previewPriority = new[]
             {
@@ -334,7 +377,6 @@ namespace TsubakiCursorApp
             return null;
         }
 
-        // ========== 应用主题（核心逻辑） ==========
         private void ApplyTheme(ThemeInfo theme)
         {
             try
@@ -411,7 +453,8 @@ namespace TsubakiCursorApp
                 _currentAppliedThemeId = theme.Id;
                 ScanLocalThemes();
                 LoadCurrentCursors();
-                SetActiveNav(NavUsing);
+                _activePage = "Using";
+                AnimateNavTo(0);
                 SwitchPage(PageUsing);
 
                 MessageBox.Show(
@@ -443,7 +486,6 @@ namespace TsubakiCursorApp
             return string.Join(",", parts);
         }
 
-        // ========== 网络：加载远程主题清单（多源回退） ==========
         private async System.Threading.Tasks.Task LoadRemoteThemesAsync()
         {
             string manifestJson = null;
@@ -483,6 +525,7 @@ namespace TsubakiCursorApp
                     if (existing != null)
                     {
                         existing.IsRemote = true;
+                        existing.IsDownloaded = true;
                         existing.DownloadUrl = downloadUrl;
                         existing.Sha256 = sha256;
                         existing.RemoteVersion = version;
@@ -514,7 +557,6 @@ namespace TsubakiCursorApp
             catch { }
         }
 
-        // ========== 辅助：递归复制目录（跨卷兼容，替代 Directory.Move） ==========
         private static void CopyDirectoryRecursive(string sourceDir, string destDir)
         {
             Directory.CreateDirectory(destDir);
@@ -530,7 +572,6 @@ namespace TsubakiCursorApp
             }
         }
 
-        // ========== 网络：下载主题 ==========
         private async System.Threading.Tasks.Task DownloadThemeAsync(ThemeInfo theme)
         {
             try
@@ -567,7 +608,6 @@ namespace TsubakiCursorApp
                     string innerFolder = extractedItems[0];
                     if (Directory.Exists(extractDir))
                         Directory.Delete(extractDir, true);
-                    // 使用 Copy + Delete 替代 Move，跨卷兼容
                     CopyDirectoryRecursive(innerFolder, extractDir);
                     Directory.Delete(innerFolder, true);
                 }
@@ -575,7 +615,6 @@ namespace TsubakiCursorApp
                 {
                     if (Directory.Exists(extractDir))
                         Directory.Delete(extractDir, true);
-                    // 使用 Copy + Delete 替代 Move，跨卷兼容
                     CopyDirectoryRecursive(tempExtractDir, extractDir);
                     Directory.Delete(tempExtractDir, true);
                 }
@@ -620,50 +659,75 @@ namespace TsubakiCursorApp
             }
         }
 
-        // ========== 导航切换 ==========
-        private void SetActiveNav(Border nav)
+        private void SwitchPage(Grid targetPage)
         {
-            _activeNav.Background = Brushes.Transparent;
-            ((TextBlock)_activeNav.Child).Foreground = new SolidColorBrush(Color.FromRgb(204, 204, 204));
+            Grid currentPage = null;
+            if (PageUsing.Visibility == Visibility.Visible) currentPage = PageUsing;
+            else if (PageList.Visibility == Visibility.Visible) currentPage = PageList;
+            else if (PageAbout.Visibility == Visibility.Visible) currentPage = PageAbout;
 
-            _activeNav = nav;
-            _activeNav.Background = new SolidColorBrush(Color.FromRgb(60, 60, 60));
-            ((TextBlock)_activeNav.Child).Foreground = Brushes.White;
-        }
+            if (currentPage == targetPage) return;
 
-        private void SwitchPage(Grid page)
-        {
-            PageUsing.Visibility = Visibility.Collapsed;
-            PageList.Visibility = Visibility.Collapsed;
-            PageAbout.Visibility = Visibility.Collapsed;
-            page.Visibility = Visibility.Visible;
+            if (currentPage != null)
+            {
+                var fadeOut = new DoubleAnimation(0, TimeSpan.FromMilliseconds(180));
+                fadeOut.Completed += (s, e) =>
+                {
+                    currentPage.Visibility = Visibility.Collapsed;
+                    targetPage.Visibility = Visibility.Visible;
+                    targetPage.Opacity = 0;
+                    var fadeIn = new DoubleAnimation(1, TimeSpan.FromMilliseconds(220))
+                    {
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                    };
+                    targetPage.BeginAnimation(UIElement.OpacityProperty, fadeIn);
+                };
+                fadeOut.EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn };
+                currentPage.BeginAnimation(UIElement.OpacityProperty, fadeOut);
+            }
+            else
+            {
+                targetPage.Visibility = Visibility.Visible;
+            }
         }
 
         private void NavUsing_Click(object sender, MouseButtonEventArgs e)
         {
-            SetActiveNav(NavUsing);
+            if (_activePage == "Using") return;
+            _activePage = "Using";
+            AnimateNavTo(0);
             SwitchPage(PageUsing);
         }
 
         private void NavList_Click(object sender, MouseButtonEventArgs e)
         {
-            SetActiveNav(NavList);
+            if (_activePage == "List") return;
+            _activePage = "List";
+            AnimateNavTo(1);
             SwitchPage(PageList);
         }
 
         private void NavAbout_Click(object sender, MouseButtonEventArgs e)
         {
-            SetActiveNav(NavAbout);
+            if (_activePage == "About") return;
+            _activePage = "About";
+            AnimateNavTo(2);
             SwitchPage(PageAbout);
         }
 
-        // ========== 刷新远程主题列表 ==========
         private async void BtnRefreshRemote_Click(object sender, RoutedEventArgs e)
         {
-            await LoadRemoteThemesAsync();
+            LoadingBar.Visibility = Visibility.Visible;
+            try
+            {
+                await LoadRemoteThemesAsync();
+            }
+            finally
+            {
+                LoadingBar.Visibility = Visibility.Collapsed;
+            }
         }
 
-        // ========== 恢复默认光标（卸载清理） ==========
         private void BtnRestoreDefault_Click(object sender, RoutedEventArgs e)
         {
             var result = MessageBox.Show(
@@ -733,7 +797,8 @@ namespace TsubakiCursorApp
                 _currentAppliedThemeId = null;
                 ScanLocalThemes();
                 LoadCurrentCursors();
-                SetActiveNav(NavUsing);
+                _activePage = "Using";
+                AnimateNavTo(0);
                 SwitchPage(PageUsing);
 
                 MessageBox.Show(
@@ -752,7 +817,6 @@ namespace TsubakiCursorApp
             }
         }
 
-        // ========== 点击按钮（应用 / 下载 / 更新） ==========
         private async void BtnApplyTheme_Click(object sender, RoutedEventArgs e)
         {
             Button button = sender as Button;
@@ -792,7 +856,21 @@ namespace TsubakiCursorApp
         }
     }
 
-    // ========== 数据类 ==========
+    public class BoolToVisibilityConverter : System.Windows.Data.IValueConverter
+    {
+        public object Convert(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            if (value is bool b && b)
+                return Visibility.Visible;
+            return Visibility.Collapsed;
+        }
+
+        public object ConvertBack(object value, Type targetType, object parameter, System.Globalization.CultureInfo culture)
+        {
+            throw new NotImplementedException();
+        }
+    }
+
     public class CursorInfo
     {
         public string Name { get; set; }
