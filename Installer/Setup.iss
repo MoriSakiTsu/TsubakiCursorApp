@@ -1,10 +1,10 @@
 ; ============================================================
-; TsubakiCursorApp Installer v3.2.0
+; TsubakiCursorApp Installer v1.1.0
 ; Self-contained - zero external dependencies
 ; ============================================================
 
 #define MyAppName "TsubakiCursorApp"
-#define MyAppVersion "3.2.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "MoriSakiTsu"
 #define MyAppURL "https://github.com/MoriSakiTsu/TsubakiCursorApp"
 #define MyAppExeName "TsubakiCursorApp.exe"
